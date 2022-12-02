@@ -11,11 +11,13 @@ def Extend(Stmts,Productions):
             if len(TryExtend) > 0 :
                 for extended in TryExtend:
                     ret.append(Stmts[0:i]+[extended]+Stmts[i+1:])
+                return ret
         elif type(Stmts[i]) == tuple:
             continue
         elif Stmts[i] in Productions:
             for extended in Productions[Stmts[i]]:
                 ret.append(Stmts[0:i]+[extended]+Stmts[i+1:])
+            return ret
     return ret
 
 def stripComments(bmFile):
