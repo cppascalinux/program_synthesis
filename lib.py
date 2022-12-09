@@ -19,7 +19,10 @@ liaAllLambda = {
     'mod': lambda x, y: x % y,
     '<=': lambda x, y: x <= y,
     '>=': lambda x, y: x >= y,
+    '<': lambda x, y: x < y,
+    '>': lambda x, y: x > y,
     '=': lambda x, y: x == y,
+    '=>': lambda x, y: y if x else True,
     'ite': lambda x, y, z: y if x else z
 }
 
@@ -228,7 +231,6 @@ def addExample(exampleInput):
     global genDep
     for i, inparam in enumerate(exampleInput):
         AllExamplesInput[i] = np.append(AllExamplesInput[i], inparam)
-    print(AllExamplesInput)
     
     AllExampleCnt += 1
     feSet = set()   # avaliable expr for this example.
@@ -248,7 +250,7 @@ def addExample(exampleInput):
                 if fe.term == startSym:
                     feidx = len(listAllFunExpr)-1
                     for exid in range(AllExampleCnt):
-                        exinput = [inputlist[i] for inputlist in AllExamplesInput]
+                        exinput = [inputlist[exid] for inputlist in AllExamplesInput]
                         if checkCons(fe, exinput):
                             example2Expr[exid].add(feidx)
     
@@ -330,7 +332,7 @@ if __name__ == "__main__":
             inp = [inputlist[i] for inputlist in AllExamplesInput]  # pick the i th input
             node = walkTree(treeRoot, inp)
             if node.evalFunc is None:
-                for w in example2Expr[i]:
+                for w in sorted(list(example2Expr[i])):
                     node.evalFunc = w
                     break
             if node.evalFunc in example2Expr[i]:
@@ -338,7 +340,7 @@ if __name__ == "__main__":
                 continue
             arrInp = [inputlist[node.todoExamples] for inputlist in AllExamplesInput]
             evalI = None
-            for w in example2Expr[i]:
+            for w in sorted(list(example2Expr[i])):
                 evalI = w
                 break
             # print('evalI:',evalI)
@@ -381,8 +383,6 @@ if __name__ == "__main__":
                     if fe.term == startSym:
                         # TODO tricky
                         continue
-                    print(fe.expr)
-                    
                     arr1 = fe.func(*arrInp)
                     i1 = fe.func(*inp) == True
                     if np.all(arr1) and not i1:
@@ -399,8 +399,6 @@ if __name__ == "__main__":
                         break
         finalExpr = getTreeExpr(treeRoot)
         cexample = genCounterExample(outpExpr(finalExpr))
-        print(outpExpr(finalExpr))
-        
     print(outpExpr(finalExpr))
 
     
