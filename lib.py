@@ -10,9 +10,9 @@ import z3
 
 
 liaAllLambda = {
-    'not': lambda x: not x,
-    'and': lambda x, y: x and y,
-    'or': lambda x, y: x or y,
+    'not': lambda x: np.logical_not(x),
+    'and': lambda x, y: np.logical_and(x,y),
+    'or': lambda x, y: np.logical_or(x,y),
     '+': lambda x, y: x + y,
     '-': lambda x, y: x - y,
     '*': lambda x, y: x * y,
@@ -40,16 +40,16 @@ depFunExpr = {}
 listAllFunExpr=[]
 
 synFunName2Num = {}
-synFunNames = []
+decName2Num = {}
+declaredNames = []
 
 class FunExpr:
-    def __init__(self, term, expr, length, func, ret):
+    def __init__(self, term, expr, length, func):
         super().__init__()
         self.term = term
         self.expr = expr
         self.length = length
         self.func = func
-        self.ret = np.array(ret, dtype='uint64')
 
 class treeNode:
     def __init__(self, ls, rs, classFunc, evalFunc, todoExamples):
@@ -92,7 +92,7 @@ def parseRule(expr):
             oprF = AllFunctions[e[0]]
             return lambda *a: lambda *b: oprF(*[ff(*a)(*b) for ff in ret])
         elif type(e) == tuple:
-            return lambda *a: lambda *b: np.uint64(e[1])
+            return lambda *a: lambda *b: np.int64(e[1])
         elif e in prodRules:
             nonlocal idx
             idx += 1
@@ -141,15 +141,9 @@ def genDepExpr(term, dep):
                         return
 
                 newExpr = exprF(*[w.expr for w in listFE])
-                fl = [w.f for w in listFE]
+                fl = [w.func for w in listFE]
                 newF = lambda *a, tf=funF: tf(*fl)(*a)
-                if type(expr) == list and numT + 1 == len(expr) and expr[0] in AllFunctions:
-                    newRet = AllFunctions[expr[0]](*[fe.ret for fe in listFE])
-                else:
-                    newRet = newF(*AllExamplesInput)
-                    # print('newRet:', newRet)
-                # print('newRet:',newRet)
-                fe = FunExpr(term, newExpr, dep, newF, newRet)
+                fe = FunExpr(term, newExpr, dep, newF)
                 depFunExpr[term][dep].append(fe)
             else:
                 dn = 1
@@ -195,33 +189,33 @@ genDep = 0
 finalExpr = []
 example2Expr = []
 
-def genCounterExample(str):
-    cexample = checker.check(str)
+def genCounterExample(Str):
+    cexample = checker.check(Str)
     if cexample == None:
         return None
     ret = []
-    for param in synFunNames:
+    for param in declaredNames:
         # TODO what if it is not Int?
         if cexample[z3.Int(param)] == None:
             ret.append(0)
         else:
-            ret.append(cexample[z3.Int(param)])
+            ret.append(int(str(cexample[z3.Int(param)])))   # TODO ugly
     return ret
 
-def evalExpr(expr):
+def evalExpr(expr, exampleinput):
     if type(expr) == list:
-        ret = [evalExpr(term) for term in expr[1:]]
+        ret = [evalExpr(term, exampleinput) for term in expr[1:]]
         return AllFunctions[expr[0]](*ret)
     elif type(expr) == tuple:
         return expr[1]
     else:
-        assert False
+        return exampleinput[decName2Num[expr]]
 
 def checkCons(funcexpr, example):
     ret = True
     AllFunctions[synFunName] = funcexpr.func
     for expr in listConstraint:
-        if not evalExpr(expr):
+        if not evalExpr(expr, example):
             ret = False
             break
     AllFunctions[synFunName] = None
@@ -233,8 +227,9 @@ def addExample(exampleInput):
     global listAllFunExpr
     global genDep
     for i, inparam in enumerate(exampleInput):
-        np.append(AllExamplesInput[i], inparam)
+        AllExamplesInput[i] = np.append(AllExamplesInput[i], inparam)
     print(AllExamplesInput)
+    
     AllExampleCnt += 1
     feSet = set()   # avaliable expr for this example.
     for i, funcexpr in enumerate(listAllFunExpr):
@@ -248,14 +243,14 @@ def addExample(exampleInput):
         genDep += 1
         for term in prodRules.keys():
             genDepExpr(term, genDep)
-        for fe in depFunExpr[startSym][genDep]:
-            listAllFunExpr.append(fe)
-            if fe.term == startSym:
-                feidx = len(listAllFunExpr)-1
-                for exid in range(AllExampleCnt):
-                    exinput = [inputlist[i] for inputlist in AllExamplesInput]
-                    if checkCons(fe, exinput):
-                        example2Expr[exid].add(feidx)
+            for fe in depFunExpr[term][genDep]:
+                listAllFunExpr.append(fe)
+                if fe.term == startSym:
+                    feidx = len(listAllFunExpr)-1
+                    for exid in range(AllExampleCnt):
+                        exinput = [inputlist[i] for inputlist in AllExamplesInput]
+                        if checkCons(fe, exinput):
+                            example2Expr[exid].add(feidx)
     
 
 
@@ -272,13 +267,15 @@ if __name__ == "__main__":
             synFunName = expr[1]
             for i, e in enumerate(expr[2]): # Params
                 synFunName2Num[e[0]] = i
-                synFunNames.append(e[0])
-            AllExamplesInput=[np.array([], dtype='int64') for _ in range(len(expr[2]))]
         elif expr[0] == 'define-fun':
             # no define-fun in open_tests
             # TODO
 
             pass
+        elif expr[0] == 'declare-var':
+            decName2Num[expr[1]]=len(declaredNames)
+            declaredNames.append(expr[1])
+            AllExamplesInput.append(np.array([], dtype='int64'))
         elif expr[0] == 'constraint':
             listConstraint.append(expr[1])
     
@@ -299,7 +296,11 @@ if __name__ == "__main__":
         
         # retType[tName] = tType
         for expr in term[2]:
+            
             # expr: like (* Start Start)
+            # NOTE no ite in Expr.
+            if type(expr) == list and expr[0] == 'ite':
+                continue
             prodRules[tName].append(parseRule(expr))
         
         depFunExpr[tName] = [[] for _ in range(100)]
@@ -307,14 +308,14 @@ if __name__ == "__main__":
     genDep = 1
     for term in prodRules.keys():
         genDepExpr(term, genDep)
-    for fe in depFunExpr[startSym][genDep]:
-        listAllFunExpr.append(fe)
-        if fe.term == startSym:
-            feidx = len(listAllFunExpr)-1
-            for exid in range(AllExampleCnt):
-                exinput = [inputlist[i] for inputlist in AllExamplesInput]
-                if checkCons(fe, exinput):
-                    example2Expr[exid].add(feidx)
+        for fe in depFunExpr[term][genDep]:
+            listAllFunExpr.append(fe)
+            if fe.term == startSym:
+                feidx = len(listAllFunExpr)-1
+                for exid in range(AllExampleCnt):
+                    exinput = [inputlist[i] for inputlist in AllExamplesInput]
+                    if checkCons(fe, exinput):
+                        example2Expr[exid].add(feidx)
     
     treeRoot = treeNode(None, None, None, 0, [])
     finalExpr = getTreeExpr(treeRoot)
@@ -347,7 +348,7 @@ if __name__ == "__main__":
                 if fe.term == startSym:
                     # TODO tricky
                     continue
-                arr1 = fe.func(*arrInp) == True
+                arr1 = fe.func(*arrInp)
                 i1 = fe.func(*inp) == True
                 if np.all(arr1) and not i1:
                     lsNode = treeNode(None, None, None, node.evalFunc, node.todoExamples)
@@ -364,23 +365,25 @@ if __name__ == "__main__":
 
             while not fg:
                 genDep += 1
+                startId = len(listAllFunExpr)
                 for term in prodRules.keys():
                     genDepExpr(term, genDep)
-                startId = len(listAllFunExpr)
-                for fe in depFunExpr[startSym][genDep]:
-                    listAllFunExpr.append(fe)
-                    if fe.term == startSym:
-                        feidx = len(listAllFunExpr)-1
-                        for exid in range(AllExampleCnt):
-                            exinput = [inputlist[i] for inputlist in AllExamplesInput]
-                            if checkCons(fe, exinput):
-                                example2Expr[exid].add(feidx)
+                    for fe in depFunExpr[term][genDep]:
+                        listAllFunExpr.append(fe)
+                        if fe.term == startSym:
+                            feidx = len(listAllFunExpr)-1
+                            for exid in range(AllExampleCnt):
+                                exinput = [inputlist[i] for inputlist in AllExamplesInput]
+                                if checkCons(fe, exinput):
+                                    example2Expr[exid].add(feidx)
                 for tid, fe in enumerate(listAllFunExpr[startId:]):
                     idFE = tid + startId
                     if fe.term == startSym:
                         # TODO tricky
                         continue
-                    arr1 = fe.func(*arrInp) == True
+                    print(fe.expr)
+                    
+                    arr1 = fe.func(*arrInp)
                     i1 = fe.func(*inp) == True
                     if np.all(arr1) and not i1:
                         lsNode = treeNode(None, None, None, node.evalFunc, node.todoExamples)
@@ -394,6 +397,11 @@ if __name__ == "__main__":
                         node.reinit(lsNode, rsNode, idFE, None, [])
                         fg = True
                         break
+        finalExpr = getTreeExpr(treeRoot)
+        cexample = genCounterExample(outpExpr(finalExpr))
+        print(outpExpr(finalExpr))
+        
+    print(outpExpr(finalExpr))
 
     
 
