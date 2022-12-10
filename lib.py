@@ -6,7 +6,7 @@ import sexp
 import translator
 import numpy as np
 import z3
-
+import random
 
 
 liaAllLambda = {
@@ -49,7 +49,7 @@ declaredNames = []
 class FunExpr:
     def __init__(self, term, expr, length, func):
         super().__init__()
-        self.term = term
+        self.term = term    # Start or StartBool
         self.expr = expr
         self.length = length
         self.func = func
@@ -190,20 +190,10 @@ def getTreeExpr(node):
 
 genDep = 0
 finalExpr = []
-example2Expr = []
+evalexpr2Examples = {}
+boolexpr2Examples = {}
 
-def genCounterExample(Str):
-    cexample = checker.check(Str)
-    if cexample == None:
-        return None
-    ret = []
-    for param in declaredNames:
-        # TODO what if it is not Int?
-        if cexample[z3.Int(param)] == None:
-            ret.append(0)
-        else:
-            ret.append(int(str(cexample[z3.Int(param)])))   # TODO ugly
-    return ret
+# ---- check if funcexpr is a valid output for example ----
 
 def evalExpr(expr, exampleinput):
     if type(expr) == list:
@@ -224,24 +214,42 @@ def checkCons(funcexpr, example):
     AllFunctions[synFunName] = None
     return ret
 
+# ---- check if funcexpr is a valid output for example ----
+
+
+# ---- gen counter example and tackle it ----
+def genCounterExample(Str):
+    cexample = checker.check(Str)
+    if cexample == None:
+        return None
+    ret = []
+    for param in declaredNames:
+        # TODO what if it is not Int?
+        if cexample[z3.Int(param)] == None:
+            ret.append(0)
+        else:
+            ret.append(int(str(cexample[z3.Int(param)])))   # TODO ugly
+    return ret
+
 def addExample(exampleInput):
-    global AllExamplesInput
+
+    # add a counterexample and find corresponding expr for it.
+
     global AllExampleCnt
-    global listAllFunExpr
     global genDep
-    for i, inparam in enumerate(exampleInput):
-        AllExamplesInput[i] = np.append(AllExamplesInput[i], inparam)
-    
-    AllExampleCnt += 1
-    feSet = set()   # avaliable expr for this example.
+    findValidExpr = False
+    AllExamplesInput.append(exampleInput)
     for i, funcexpr in enumerate(listAllFunExpr):
         if funcexpr.term != startSym:
+            if funcexpr.func(*exampleInput):
+                boolexpr2Examples[i].add(AllExampleCnt)
             continue
         # NOTE check constraints with target = funcexpr and input = exampleInput
         if checkCons(funcexpr, exampleInput):
-            feSet.add(i)
-    example2Expr.append(feSet)
-    while not example2Expr[-1]:
+            evalexpr2Examples[i].add(AllExampleCnt)
+            findValidExpr = True
+    AllExampleCnt += 1
+    while not findValidExpr:
         genDep += 1
         for term in prodRules.keys():
             genDepExpr(term, genDep)
@@ -249,11 +257,119 @@ def addExample(exampleInput):
                 listAllFunExpr.append(fe)
                 if fe.term == startSym:
                     feidx = len(listAllFunExpr)-1
-                    for exid in range(AllExampleCnt):
-                        exinput = [inputlist[exid] for inputlist in AllExamplesInput]
+                    evalexpr2Examples[feidx] = set()
+                    for i, exinput in enumerate(AllExamplesInput):
                         if checkCons(fe, exinput):
-                            example2Expr[exid].add(feidx)
+                            evalexpr2Examples[feidx].add(i)
+                            if i == AllExampleCnt-1:
+                                findValidExpr = True
+                else:
+                    feidx = len(listAllFunExpr)-1
+                    boolexpr2Examples[feidx] = set()
+                    for i, exinput in enumerate(AllExamplesInput):
+                        if fe.func(*exinput):
+                            boolexpr2Examples[feidx].add(i)
+# ---- gen counter example and tackle it ----
     
+candidateCnt = 0
+listCandidateExpr = []
+
+def splitExample(exampleSet, listCanExpr):
+    Cnt = 0; retList = []
+    doneExamples = set()
+    while len(doneExamples) < len(exampleSet):
+        maxscore = 0.0
+        maxid = -1
+        for feidx in listCanExpr:
+            id = feidx
+            exset = evalexpr2Examples[id] & exampleSet
+            score = len(exset-doneExamples)/listAllFunExpr[id].length
+            # print(listAllFunExpr[feidx].expr, score)
+            if maxscore < score:
+                maxid = id
+                maxscore = score
+        assert maxid >= 0
+        retList.append(maxid)
+        Cnt += 1
+        doneExamples = doneExamples | (evalexpr2Examples[maxid] & exampleSet)
+    return Cnt, retList
+
+def buildTree(node:treeNode, listCanExpr:list):
+    global genDep
+    # print("Node:", node.todoExamples, listCandidateExpr)
+    curClassCnt = len(listCanExpr)
+    assert curClassCnt >= 1
+    if curClassCnt == 1:
+        node.evalFunc = listCanExpr[0]
+    else:
+        assert len(node.todoExamples) > 1
+        lsNode = None
+        rsNode = None
+        lsClassList = []
+        rsClassList = []
+        foundClassFunc = False
+        for feidx, fe in enumerate(listAllFunExpr):
+            if fe.term == startSym:
+                continue
+            # NOTE term==StartBool if not startSym
+            lsSet = node.todoExamples & boolexpr2Examples[feidx]
+            rsSet = node.todoExamples - boolexpr2Examples[feidx]
+            if not (lsSet and rsSet):
+                continue
+            lsClassCnt, lsClassList = splitExample(lsSet, listCanExpr)
+            rsClassCnt, rsClassList = splitExample(rsSet, listCanExpr)
+            assert rsClassCnt>0 and lsClassCnt>0
+            if (lsClassCnt<curClassCnt and rsClassCnt<curClassCnt):
+                lsNode = treeNode(None, None, None, None, lsSet)
+                rsNode = treeNode(None, None, None, None, rsSet)
+                node.reinit(lsNode, rsNode, feidx, None, node.todoExamples)
+                foundClassFunc = True
+                break
+        while not foundClassFunc:
+            startId = len(listAllFunExpr)
+            genDep += 1
+            for term in prodRules.keys():
+                genDepExpr(term, genDep)
+                for fe in depFunExpr[term][genDep]:
+                    listAllFunExpr.append(fe)
+                    if fe.term == startSym:
+                        feidx = len(listAllFunExpr)-1
+                        evalexpr2Examples[feidx] = set()
+                        for i, exinput in enumerate(AllExamplesInput):
+                            if checkCons(fe, exinput):
+                                evalexpr2Examples[feidx].add(i)
+                    else:
+                        feidx = len(listAllFunExpr)-1
+                        boolexpr2Examples[feidx] = set()
+                        for i, exinput in enumerate(AllExamplesInput):
+                            if fe.func(*exinput):
+                                boolexpr2Examples[feidx].add(i)
+            for idx, fe in enumerate(listAllFunExpr[startId:]):
+                feidx = idx + startId
+                if fe.term == startSym:
+                    continue
+                # NOTE term==StartBool if not startSym
+                lsSet = node.todoExamples & boolexpr2Examples[feidx]
+                rsSet = node.todoExamples - boolexpr2Examples[feidx]
+                if not (lsSet and rsSet):
+                    continue
+                lsClassCnt, lsClassList = splitExample(lsSet, listCanExpr)
+                rsClassCnt, rsClassList = splitExample(rsSet, listCanExpr)
+                if fe.expr[0] == 'and' and fe.expr[1] == ['>=', 'y', 'x']:
+                    print(fe.expr, lsSet, rsSet, lsClassList, rsClassList)
+                assert rsClassCnt>0 and lsClassCnt>0
+                if (lsClassCnt<curClassCnt and rsClassCnt<curClassCnt):
+                    lsNode = treeNode(None, None, None, None, lsSet)
+                    rsNode = treeNode(None, None, None, None, rsSet)
+                    node.reinit(lsNode, rsNode, feidx, None, node.todoExamples)
+                    foundClassFunc = True
+                    break
+        assert lsNode!=None
+        assert rsNode!=None
+        buildTree(lsNode, lsClassList)
+        buildTree(rsNode, rsClassList)
+    
+
 
 
 if __name__ == "__main__":
@@ -277,7 +393,6 @@ if __name__ == "__main__":
         elif expr[0] == 'declare-var':
             decName2Num[expr[1]]=len(declaredNames)
             declaredNames.append(expr[1])
-            AllExamplesInput.append(np.array([], dtype='int64'))
         elif expr[0] == 'constraint':
             listConstraint.append(expr[1])
     
@@ -314,91 +429,47 @@ if __name__ == "__main__":
             listAllFunExpr.append(fe)
             if fe.term == startSym:
                 feidx = len(listAllFunExpr)-1
-                for exid in range(AllExampleCnt):
-                    exinput = [inputlist[i] for inputlist in AllExamplesInput]
+                evalexpr2Examples[feidx] = set()
+                for i, exinput in enumerate(AllExamplesInput):
                     if checkCons(fe, exinput):
-                        example2Expr[exid].add(feidx)
-    
+                        evalexpr2Examples[feidx].add(i)
+            else:
+                feidx = len(listAllFunExpr)-1
+                boolexpr2Examples[feidx] = set()
+                for i, exinput in enumerate(AllExamplesInput):
+                    if fe.func(*exinput):
+                        boolexpr2Examples[feidx].add(i)
+
+    needRandomExample = True
+
     treeRoot = treeNode(None, None, None, 0, [])
     finalExpr = getTreeExpr(treeRoot)
     cexample = genCounterExample(outpExpr(finalExpr))
     while cexample != None:
-        addExample(cexample)    # find an expr for cexample, update ret
+        addExample(cexample)    # find an expr for cexample
         
-        lsCons = [(i, len(ls)) for i, ls in enumerate(example2Expr)]
-        lsCons = sorted(lsCons, key=lambda x: x[1])
-        treeRoot = treeNode(None, None, None, None, [])
-        for i, _ in lsCons:
-            inp = [inputlist[i] for inputlist in AllExamplesInput]  # pick the i th input
-            node = walkTree(treeRoot, inp)
-            if node.evalFunc is None:
-                for w in sorted(list(example2Expr[i])):
-                    node.evalFunc = w
-                    break
-            if node.evalFunc in example2Expr[i]:
-                node.todoExamples.append(i)
-                continue
-            arrInp = [inputlist[node.todoExamples] for inputlist in AllExamplesInput]
-            evalI = None
-            for w in sorted(list(example2Expr[i])):
-                evalI = w
-                break
-            # print('evalI:',evalI)
+        if needRandomExample:
+            for _ in range(50):
+                exinput = [random.randrange(-2,15) for _ in range(len(cexample))]
+                addExample(exinput)
+            needRandomExample = False
 
-            fg = False
-            for idFE, fe in enumerate(listAllFunExpr):
-                if fe.term == startSym:
-                    # TODO tricky
-                    continue
-                arr1 = fe.func(*arrInp)
-                i1 = fe.func(*inp) == True
-                if np.all(arr1) and not i1:
-                    lsNode = treeNode(None, None, None, node.evalFunc, node.todoExamples)
-                    rsNode = treeNode(None, None, None, evalI, [i])
-                    node.reinit(lsNode, rsNode, idFE, None, [])
-                    fg = True
-                    break
-                elif not np.any(arr1) and i1:
-                    lsNode = treeNode(None, None, None, evalI, [i])
-                    rsNode = treeNode(None, None, None, node.evalFunc, node.todoExamples)
-                    node.reinit(lsNode, rsNode, idFE, None, [])
-                    fg = True
-                    break
+        candidateCnt, listCandidateExpr = splitExample(set(range(AllExampleCnt)), list(evalexpr2Examples.keys()))
+        # print("----iter----")
+        # for i, exinput in enumerate(AllExamplesInput):
+        #     print(i, exinput)
+        # for feidx in listCandidateExpr:
+        #     print(feidx, listAllFunExpr[feidx].expr, evalexpr2Examples[feidx])
+        # print("----iter----")
+        
+        
+        treeRoot = treeNode(None, None, None, None, set(range(AllExampleCnt)))
+        buildTree(treeRoot, listCandidateExpr)
 
-            while not fg:
-                genDep += 1
-                startId = len(listAllFunExpr)
-                for term in prodRules.keys():
-                    genDepExpr(term, genDep)
-                    for fe in depFunExpr[term][genDep]:
-                        listAllFunExpr.append(fe)
-                        if fe.term == startSym:
-                            feidx = len(listAllFunExpr)-1
-                            for exid in range(AllExampleCnt):
-                                exinput = [inputlist[i] for inputlist in AllExamplesInput]
-                                if checkCons(fe, exinput):
-                                    example2Expr[exid].add(feidx)
-                for tid, fe in enumerate(listAllFunExpr[startId:]):
-                    idFE = tid + startId
-                    if fe.term == startSym:
-                        # TODO tricky
-                        continue
-                    arr1 = fe.func(*arrInp)
-                    i1 = fe.func(*inp) == True
-                    if np.all(arr1) and not i1:
-                        lsNode = treeNode(None, None, None, node.evalFunc, node.todoExamples)
-                        rsNode = treeNode(None, None, None, evalI, [i])
-                        node.reinit(lsNode, rsNode, idFE, None, [])
-                        fg = True
-                        break
-                    elif not np.any(arr1) and i1:
-                        lsNode = treeNode(None, None, None, evalI, [i])
-                        rsNode = treeNode(None, None, None, node.evalFunc, node.todoExamples)
-                        node.reinit(lsNode, rsNode, idFE, None, [])
-                        fg = True
-                        break
         finalExpr = getTreeExpr(treeRoot)
+        # print(outpExpr(finalExpr))
         cexample = genCounterExample(outpExpr(finalExpr))
+        
     print(outpExpr(finalExpr))
 
     
