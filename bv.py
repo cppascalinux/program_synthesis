@@ -270,7 +270,7 @@ def outpExpr(expr):
     # print('expr', expr)
     # print('fullExpr', fullExpr)
     strExpr = translator.toString(fullExpr, ForceBracket=True)
-    print(strExpr)
+    # print(strExpr)
     return strExpr
 
 
@@ -290,20 +290,19 @@ def getTreeExpr(node):
 
 
 def assertCons(expr):
-    assert expr[0]=='='
+    assert expr[0] == '='
     if type(expr[1]) is tuple:
-        tmp=expr[1]
-        expr[1]=expr[2]
-        expr[2]=tmp
+        tmp = expr[1]
+        expr[1] = expr[2]
+        expr[2] = tmp
     assert type(expr[1]) is list
-    assert expr[1][0]==synFunName
+    assert expr[1][0] == synFunName
 
     for e in expr[1][1:]:
         assert type(e) is tuple
-        assert tuple(e[0])==('BitVec',('Int',64))
+        assert tuple(e[0]) == ('BitVec', ('Int', 64))
     assert type(expr[2]) is tuple
-    assert tuple(expr[2][0])==('BitVec',('Int',64))
-
+    assert tuple(expr[2][0]) == ('BitVec', ('Int', 64))
 
 
 def solve(bmExpr):
@@ -344,7 +343,7 @@ def solve(bmExpr):
         tName = term[0]
         prodRules[tName] = []
 
-    hasIf0=False
+    hasIf0 = False
 
     for term in synFunExpr[4]:
         # print(term)
@@ -357,7 +356,7 @@ def solve(bmExpr):
         retType[tName] = tType
         for expr in term[2]:
             if type(expr) == list and expr[0] == 'if0':
-                hasIf0=True
+                hasIf0 = True
                 continue
             prodRules[tName].append(parseRule(expr))
         setFunExpr[tName] = set()
@@ -375,8 +374,10 @@ def solve(bmExpr):
             for funExpr in depFunExpr[startSym][dep]:
                 # print('dep:', dep, 'expr:', funExpr.expr)
                 if checkFun(funExpr):
-                    assert checker.check(outpExpr(funExpr.expr)) is None
-                    exit(0)
+                    strExpr = outpExpr(funExpr.expr)
+                    assert checker.check(strExpr) is None
+                    print(strExpr)
+                    return
             # print(tot, len(depFunExpr[startSym][dep]))
 
     genDep = 0
@@ -469,10 +470,12 @@ def solve(bmExpr):
 
     expr = getTreeExpr(treeRoot)
     # print(expr)
-    assert checker.check(outpExpr(expr)) is None
+    strExpr = outpExpr(expr)
+    assert (checker.check(strExpr)) is None
+    print(strExpr)
 
 
-if __name__=='__main__':
+if __name__ == '__main__':
     benchmarkFile = open(sys.argv[1])
     bm = stripComments(benchmarkFile)
     bmExpr = sexp.sexp.parseString(bm, parseAll=True).asList()[0]
