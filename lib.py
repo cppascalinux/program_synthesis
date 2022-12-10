@@ -489,6 +489,8 @@ def genAnswer(bmExpr):
         if needRandomExample:
             for _ in range(50):
                 exinput = [random.randrange(-2,15) for _ in range(len(cexample))]
+                while len(cexample) > 1 and exinput in AllExamplesInput:
+                    exinput = [random.randrange(-2,15) for _ in range(len(cexample))]
                 addExample(exinput)
             needRandomExample = False
 
