@@ -5,6 +5,7 @@ import translator
 import numpy as np
 
 
+np.seterr(all="ignore")
 mask = (1 << 64) - 1
 bvFun = {
     'bvnot': lambda x: x ^ mask,
@@ -140,7 +141,7 @@ def parseCons(expr):
     #         allFInp.append(expr)
     #     for e in expr[1:]:
     #         parseCons(e)
-    allFInp.append(expr[1][1][1])
+    allFInp.append([e[1] for e in expr[1][1:]])
     allFOutp.append(expr[2][1])
 
 
@@ -230,7 +231,7 @@ def genDepExpr(term, dep):
                     newRet = allFun[expr[0]](*[fe.ret for fe in listFE])
                 else:
                     # newRet = calAllInp(newF)
-                    newRet = newF(allFInp)
+                    newRet = newF(*allFInp)
                     # print('newRet:', newRet)
                 # print('newRet:',newRet)
                 fe = FunExpr(term, newExpr, dep, newF, newRet)
@@ -269,7 +270,7 @@ def outpExpr(expr):
     # print('expr', expr)
     # print('fullExpr', fullExpr)
     strExpr = translator.toString(fullExpr, ForceBracket=True)
-    print(strExpr)
+    # print(strExpr)
     return strExpr
 
 
@@ -288,15 +289,31 @@ def getTreeExpr(node):
         return ['if0', listAllFunExpr[node.classFun].expr, lExpr, rExpr]
 
 
-if __name__ == '__main__':
-    np.seterr(all="ignore")
-    benchmarkFile = open(sys.argv[1])
-    bm = stripComments(benchmarkFile)
-    bmExpr = sexp.sexp.parseString(bm, parseAll=True).asList()[0]
+def assertCons(expr):
+    assert expr[0] == '='
+    if type(expr[1]) is tuple:
+        tmp = expr[1]
+        expr[1] = expr[2]
+        expr[2] = tmp
+    assert type(expr[1]) is list
+    assert expr[1][0] == synFunName
+
+    for e in expr[1][1:]:
+        assert type(e) is tuple
+        assert tuple(e[0]) == ('BitVec', ('Int', 64))
+    assert type(expr[2]) is tuple
+    assert tuple(expr[2][0]) == ('BitVec', ('Int', 64))
+
+
+def solve(bmExpr):
+    global tot, cons, allFInp, allFOutp, synFunExpr, synFunName, synFunName2Num
+    global startSym, prodRules, retType, hashMul, setFunExpr
+    global depFunExpr, listAllFunExpr, exprCons, mask
     checker = translator.ReadQuery(bmExpr)
 
     for expr in bmExpr:
         # print(expr)
+        assert expr[0] != 'declare-var'
         if expr[0] == 'synth-fun':
             synFunExpr = expr
             synFunName = expr[1]
@@ -306,6 +323,7 @@ if __name__ == '__main__':
         elif expr[0] == 'define-fun':
             parseDefFun(expr)
         elif expr[0] == 'constraint':
+            assertCons(expr[1])
             parseCons(expr[1])
             cons.append(expr[1])
 
@@ -314,7 +332,8 @@ if __name__ == '__main__':
     )
     remCons = len(allFInp)
     exprCons = [set() for i in range(remCons)]
-    allFInp = np.array(allFInp, dtype='uint64')
+    # print(allFInp)
+    allFInp = [np.array(t, dtype='uint64') for t in zip(*allFInp)]
     allFOutp = np.array(allFOutp, dtype='uint64')
     retType = {startSym: synFunExpr[3]}
 
@@ -323,6 +342,8 @@ if __name__ == '__main__':
     for term in synFunExpr[4]:
         tName = term[0]
         prodRules[tName] = []
+
+    hasIf0 = False
 
     for term in synFunExpr[4]:
         # print(term)
@@ -335,6 +356,7 @@ if __name__ == '__main__':
         retType[tName] = tType
         for expr in term[2]:
             if type(expr) == list and expr[0] == 'if0':
+                hasIf0 = True
                 continue
             prodRules[tName].append(parseRule(expr))
         setFunExpr[tName] = set()
@@ -344,16 +366,19 @@ if __name__ == '__main__':
         prodRules.pop(startSym)
         startSym = synFunExpr[4][0][0]
 
-    # for dep in range(1, 12):
-    #     for term in prodRules.keys():
-    #         print(term)
-    #         genDepExpr(term, dep)
-    #     for funExpr in depFunExpr[startSym][dep]:
-    #         print('dep:', dep, 'expr:', funExpr.expr)
-    #         if checkFun(funExpr):
-    #             outpExpr(funExpr.expr)
-    #             exit(0)
-    #     print(tot, len(depFunExpr[startSym][dep]))
+    if not hasIf0:
+        for dep in range(1, 20):
+            for term in prodRules.keys():
+                # print(term)
+                genDepExpr(term, dep)
+            for funExpr in depFunExpr[startSym][dep]:
+                # print('dep:', dep, 'expr:', funExpr.expr)
+                if checkFun(funExpr):
+                    strExpr = outpExpr(funExpr.expr)
+                    assert checker.check(strExpr) is None
+                    print(strExpr)
+                    return
+            # print(tot, len(depFunExpr[startSym][dep]))
 
     genDep = 0
 
@@ -383,7 +408,7 @@ if __name__ == '__main__':
     lsCons = sorted(lsCons, key=lambda x: x[1])
     treeRoot = treeNode(None, None, None, None, [])
     for i, _ in lsCons:
-        inp, outp = allFInp[i], allFOutp[i]
+        inp, outp = [t[i] for t in allFInp], allFOutp[i]
         node = walkTree(treeRoot, inp)
         if node.evalFun is None:
             for w in exprCons[i]:
@@ -392,7 +417,7 @@ if __name__ == '__main__':
         if node.evalFun in exprCons[i]:
             node.consL.append(i)
             continue
-        arrInp = allFInp[node.consL]
+        arrInp = [t[node.consL] for t in allFInp]
         arrOutp = allFOutp[node.consL]
         evalI = None
         for w in exprCons[i]:
@@ -402,8 +427,8 @@ if __name__ == '__main__':
 
         fg = False
         for idFE, fe in enumerate(listAllFunExpr):
-            arr1 = fe.f(arrInp) == 1
-            i1 = fe.f(inp) == 1
+            arr1 = fe.f(*arrInp) == 1
+            i1 = fe.f(*inp) == 1
             if np.all(arr1) and not i1:
                 lsNode = treeNode(None, None, None, node.evalFun, node.consL)
                 rsNode = treeNode(None, None, None, evalI, [i])
@@ -428,8 +453,8 @@ if __name__ == '__main__':
                 listAllFunExpr.append(fe)
             for tid, fe in enumerate(listAllFunExpr[startId:]):
                 idFE = tid + startId
-                arr1 = fe.f(arrInp) == 1
-                i1 = fe.f(inp) == 1
+                arr1 = fe.f(*arrInp) == 1
+                i1 = fe.f(*inp) == 1
                 if np.all(arr1) and not i1:
                     lsNode = treeNode(None, None, None, node.evalFun, node.consL)
                     rsNode = treeNode(None, None, None, evalI, [i])
@@ -445,4 +470,13 @@ if __name__ == '__main__':
 
     expr = getTreeExpr(treeRoot)
     # print(expr)
-    assert checker.check(outpExpr(expr)) is None
+    strExpr = outpExpr(expr)
+    assert (checker.check(strExpr)) is None
+    print(strExpr)
+
+
+if __name__ == '__main__':
+    benchmarkFile = open(sys.argv[1])
+    bm = stripComments(benchmarkFile)
+    bmExpr = sexp.sexp.parseString(bm, parseAll=True).asList()[0]
+    solve(bmExpr)

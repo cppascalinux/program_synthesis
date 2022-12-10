@@ -507,8 +507,10 @@ def genAnswer(bmExpr):
         finalExpr = getTreeExpr(treeRoot)
         # print(outpExpr(finalExpr))
         cexample = genCounterExample(outpExpr(finalExpr), checker)
-        
-    print(outpExpr(finalExpr))
+    
+    strExpr = outpExpr(finalExpr)
+    assert checker.check(strExpr) is None
+    print(strExpr)
 
 if __name__ == "__main__":
     benchmarkFile = open(sys.argv[1])
