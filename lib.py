@@ -8,6 +8,8 @@ import numpy as np
 import z3
 import random
 
+synFunName = ""
+synFunExpr = []
 
 liaAllLambda = {
     'not': lambda x: np.logical_not(x),
@@ -45,6 +47,8 @@ listAllFunExpr=[]
 synFunName2Num = {}
 decName2Num = {}
 declaredNames = []
+
+dec2Param = {}
 
 class FunExpr:
     def __init__(self, term, expr, length, func):
@@ -218,7 +222,7 @@ def checkCons(funcexpr, example):
 
 
 # ---- gen counter example and tackle it ----
-def genCounterExample(Str):
+def genCounterExample(Str, checker):
     cexample = checker.check(Str)
     if cexample == None:
         return None
@@ -241,7 +245,7 @@ def addExample(exampleInput):
     AllExamplesInput.append(exampleInput)
     for i, funcexpr in enumerate(listAllFunExpr):
         if funcexpr.term != startSym:
-            if funcexpr.func(*exampleInput):
+            if funcexpr.func(*example2Param(exampleInput)):
                 boolexpr2Examples[i].add(AllExampleCnt)
             continue
         # NOTE check constraints with target = funcexpr and input = exampleInput
@@ -267,12 +271,10 @@ def addExample(exampleInput):
                     feidx = len(listAllFunExpr)-1
                     boolexpr2Examples[feidx] = set()
                     for i, exinput in enumerate(AllExamplesInput):
-                        if fe.func(*exinput):
+                        if fe.func(*example2Param(exinput)):
                             boolexpr2Examples[feidx].add(i)
 # ---- gen counter example and tackle it ----
-    
-candidateCnt = 0
-listCandidateExpr = []
+
 
 def splitExample(exampleSet, listCanExpr):
     Cnt = 0; retList = []
@@ -342,7 +344,7 @@ def buildTree(node:treeNode, listCanExpr:list):
                         feidx = len(listAllFunExpr)-1
                         boolexpr2Examples[feidx] = set()
                         for i, exinput in enumerate(AllExamplesInput):
-                            if fe.func(*exinput):
+                            if fe.func(*example2Param(exinput)):
                                 boolexpr2Examples[feidx].add(i)
             for idx, fe in enumerate(listAllFunExpr[startId:]):
                 feidx = idx + startId
@@ -369,14 +371,45 @@ def buildTree(node:treeNode, listCanExpr:list):
         buildTree(lsNode, lsClassList)
         buildTree(rsNode, rsClassList)
     
+paramList = None
+def searchParam(expr):
+    global paramList
+    if type(expr) == list:
+        if expr[0] == synFunName:
+            if paramList == None:
+                paramList = expr[1:]
+            elif paramList != expr[1:]:
+                raise ValueError("Inconsistent params")
+        else:
+            for e in expr:
+                searchParam(e)
+            
+
+def getParamGen(expr):
+    if type(expr) == list:
+        ret = [getParamGen(e) for e in expr[1:]]
+        oprF = AllFunctions[expr[0]]
+        return lambda *a: oprF(*[f(*a) for f in ret])
+    elif type(expr) == tuple:
+        return lambda *a: np.int64(expr[1])
+    else:
+        return lambda *a, i=decName2Num[expr]: a[i]
 
 
+genParam = []
 
-if __name__ == "__main__":
-    
-    benchmarkFile = open(sys.argv[1])
-    bm = stripComments(benchmarkFile)
-    bmExpr = sexp.sexp.parseString(bm, parseAll=True).asList()[0]
+def example2Param(exinput):
+    global genParam
+    return [func(*exinput) for func in genParam]
+
+def genAnswer(bmExpr):
+
+    global synFunName
+    global synFunExpr
+    global startSym
+    global genParam
+
+
     checker = translator.ReadQuery(bmExpr)
 
     for expr in bmExpr:
@@ -385,6 +418,7 @@ if __name__ == "__main__":
             synFunName = expr[1]
             for i, e in enumerate(expr[2]): # Params
                 synFunName2Num[e[0]] = i
+            genParam = [0]*len(expr[2])
         elif expr[0] == 'define-fun':
             # no define-fun in open_tests
             # TODO
@@ -395,8 +429,12 @@ if __name__ == "__main__":
             declaredNames.append(expr[1])
         elif expr[0] == 'constraint':
             listConstraint.append(expr[1])
+            searchParam(expr[1])
     
-
+    if paramList != None:
+        for id, p in enumerate(paramList):
+            genParam[id] = getParamGen(p)
+    
     targetRetType = synFunExpr[3]
 
     for term in synFunExpr[4]:
@@ -437,14 +475,14 @@ if __name__ == "__main__":
                 feidx = len(listAllFunExpr)-1
                 boolexpr2Examples[feidx] = set()
                 for i, exinput in enumerate(AllExamplesInput):
-                    if fe.func(*exinput):
+                    if fe.func(*example2Param(exinput)):
                         boolexpr2Examples[feidx].add(i)
 
     needRandomExample = True
 
     treeRoot = treeNode(None, None, None, 0, [])
     finalExpr = getTreeExpr(treeRoot)
-    cexample = genCounterExample(outpExpr(finalExpr))
+    cexample = genCounterExample(outpExpr(finalExpr), checker)
     while cexample != None:
         addExample(cexample)    # find an expr for cexample
         
@@ -468,10 +506,16 @@ if __name__ == "__main__":
 
         finalExpr = getTreeExpr(treeRoot)
         # print(outpExpr(finalExpr))
-        cexample = genCounterExample(outpExpr(finalExpr))
+        cexample = genCounterExample(outpExpr(finalExpr), checker)
         
     print(outpExpr(finalExpr))
 
+if __name__ == "__main__":
+    benchmarkFile = open(sys.argv[1])
+    bm = stripComments(benchmarkFile)
+    bmExpr = sexp.sexp.parseString(bm, parseAll=True).asList()[0]
+
+    genAnswer(bmExpr)
     
 
 
