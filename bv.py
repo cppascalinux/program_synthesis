@@ -331,7 +331,7 @@ def solve(bmExpr):
         [pow(19260817, i, 1 << 64) for i in range(len(allFInp))], dtype='uint64'
     )
     remCons = len(allFInp)
-    exprCons = [set() for i in range(remCons)]
+    exprCons = [[] for i in range(remCons)]
     # print(allFInp)
     allFInp = [np.array(t, dtype='uint64') for t in zip(*allFInp)]
     allFOutp = np.array(allFOutp, dtype='uint64')
@@ -394,7 +394,7 @@ def solve(bmExpr):
             for p in pos:
                 if len(exprCons[p]) == 0:
                     remCons -= 1
-                exprCons[p].add(idxFE)
+                exprCons[p].append(idxFE)
         if remCons == 0:
             # for ls in exprCons:
             #     print(ls)
@@ -471,6 +471,7 @@ def solve(bmExpr):
     expr = getTreeExpr(treeRoot)
     # print(expr)
     strExpr = outpExpr(expr)
+    # strExpr = '(define-fun f ((x (_ BitVec 64))) (_ BitVec 64) (if0 (bvand #x0000000000000001 x) (bvnot (shl1 #x0000000000000001)) (shl1 #x0000000000000001)))'
     assert (checker.check(strExpr)) is None
     print(strExpr)
 

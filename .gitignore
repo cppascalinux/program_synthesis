@@ -162,3 +162,5 @@ cython_debug/
 .vscode
 temp.py
 open_bv_tests/test.sl
+result.txt
+tmp.sl
