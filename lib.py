@@ -174,7 +174,7 @@ def synFun2Def(expr):
 def outpExpr(expr):
     fullExpr = synFun2Def(expr)
     strExpr = translator.toString(fullExpr, ForceBracket=True)
-    # print(strExpr)
+    print(strExpr)
     return strExpr
 
 def walkTree(node, x):
@@ -508,7 +508,7 @@ def genAnswer(bmExpr):
         # print(outpExpr(finalExpr))
         cexample = genCounterExample(outpExpr(finalExpr), checker)
         
-    print(outpExpr(finalExpr))
+    assert checker.check(outpExpr(finalExpr)) is None
 
 if __name__ == "__main__":
     benchmarkFile = open(sys.argv[1])
